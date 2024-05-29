@@ -1,4 +1,10 @@
-# Fancy RL
+<h1 align="center">
+  <br>
+  <img src='./fancy_rl.svg' width="250px">
+  <br><br>
+  <b>Fancy RL</b>
+  <br><br>
+</h1>
 
 Fancy RL is a minimalistic and efficient implementation of Proximal Policy Optimization (PPO) and Trust Region Policy Layers (TRPL) using primitives from [torchrl](https://pypi.org/project/torchrl/). Future plans include implementing Soft Actor-Critic (SAC). This library focuses on providing clean and understandable code while leveraging the powerful functionalities of torchrl.
 We provide optional integration with wandb.
