@@ -6,8 +6,7 @@
   <br><br>
 </h1>
 
-Fancy RL is a minimalistic and efficient implementation of Proximal Policy Optimization (PPO) and Trust Region Policy Layers (TRPL) using primitives from [torchrl](https://pypi.org/project/torchrl/). Future plans include implementing Soft Actor-Critic (SAC). This library focuses on providing clean and understandable code while leveraging the powerful functionalities of torchrl.
-We provide optional integration with wandb.
+Fancy RL is a minimalistic and efficient implementation of Proximal Policy Optimization (PPO) and Trust Region Policy Layers (TRPL) using primitives from [torchrl](https://pypi.org/project/torchrl/). Future plans include implementing Soft Actor-Critic (SAC). This library focuses on providing clean, understandable code and reusable modules while leveraging the powerful functionalities of torchrl. We provide optional integration with wandb.
 
 ## Installation
 
@@ -19,30 +18,40 @@ pip install -e .
 
 ## Usage
 
-Here's a basic example of how to train a PPO agent with Fancy RL:
+Fancy RL provides two main components:
 
-```python
-from fancy_rl.ppo import PPO
-from fancy_rl.policy import Policy
-import gymnasium as gym
+1. **Ready-to-use Classes for PPO / TRPL**: These classes allow you to quickly get started with reinforcement learning algorithms, enjoying the performance and hackability that comes with using TorchRL.
 
-def env_fn():
-    return gym.make("CartPole-v1")
+    ```python
+    from fancy_rl.ppo import PPO
+    from fancy_rl.policy import Policy
+    import gymnasium as gym
+    
+    def env_fn():
+        return gym.make("CartPole-v1")
+    
+    # Create policy
+    env = env_fn()
+    policy = Policy(env.observation_space, env.action_space)
+    
+    # Create PPO instance with default config
+    ppo = PPO(policy=policy, env_fn=env_fn)
+    
+    # Train the agent
+    ppo.train()
+    ```
 
-# Create policy
-env = env_fn()
-policy = Policy(env.observation_space, env.action_space)
+    For environments, you can pass any torchrl environments, gymnasium environments (which we handle with a compatibility layer), or a string which we will interpret as a gymnasium ID.
 
-# Create PPO instance with default config
-ppo = PPO(policy=policy, env_fn=env_fn)
+2. **Additional Modules for TRPL**: Designed to integrate with torchrl's primitives-first approach, these modules are ideal for building custom algorithms with precise trust region projections. For detailed documentation, refer to the [docs](#).
 
-# Train the agent
-ppo.train()
-```
+### Background on Trust Region Policy Layers (TRPL)
 
-For a more complete function description and advanced usage, refer to `example/example.py`.
+Trust region methods are essential in reinforcement learning for ensuring robust policy updates. Traditional methods like TRPO and PPO use approximations, which can sometimes violate constraints or fail to find optimal solutions. To address these issues, TRPL provides differentiable neural network layers that enforce trust regions through closed-form projections for deep Gaussian policies. These layers formalize trust regions individually for each state and complement existing reinforcement learning algorithms.
 
-### Testing
+The TRPL implementation in Fancy RL includes projections based on the Kullback-Leibler divergence, the Wasserstein L2 distance, and the Frobenius norm for Gaussian distributions. This approach achieves similar or better results than existing methods while being less sensitive to specific implementation choices.
+
+## Testing
 
 To run the test suite:
 
