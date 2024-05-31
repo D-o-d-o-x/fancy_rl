@@ -9,6 +9,10 @@ from torchrl.envs import ExplorationType, set_exploration_type
 from torchrl.envs.libs.gym import GymWrapper
 from torchrl.record import VideoRecorder
 import gymnasium as gym
+try:
+    import fancy_gym
+except ImportError:
+    pass
 
 class OnPolicy(ABC):
     def __init__(
