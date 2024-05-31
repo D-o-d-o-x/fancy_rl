@@ -1,7 +1,10 @@
-policy:
-  input_dim: 4
-  output_dim: 2
+actor:
   hidden_sizes: [64, 64]
+  activation_fn: "ReLU"
+
+critic:
+  hidden_sizes: [64, 64]
+  activation_fn: "ReLU"
 
 ppo:
   learning_rate: 3e-4
@@ -15,11 +18,11 @@ ppo:
   eval_interval: 2048
   eval_deterministic: true
   eval_episodes: 10
-  seed: 42
 
 loggers:
-  - type: terminal
-  - type: wandb
+  - backend: 'wandb'
+    logger_name: "ppo"
+    experiment_name: "PPO"
     project: "PPO_project"
     entity: "your_entity"
     push_interval: 10
