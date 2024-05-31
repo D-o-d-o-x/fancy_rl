@@ -1,18 +1,13 @@
 import torch
-from abc import ABC, abstractmethod
-from torchrl.record.loggers import Logger
-from torch.optim import Adam
+import gymnasium as gym
 from torchrl.collectors import SyncDataCollector
 from torchrl.data import LazyMemmapStorage, TensorDictReplayBuffer
 from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
-from torchrl.envs import ExplorationType, set_exploration_type
 from torchrl.envs.libs.gym import GymWrapper
+from torchrl.envs import ExplorationType, set_exploration_type
 from torchrl.record import VideoRecorder
-import gymnasium as gym
-try:
-    import fancy_gym
-except ImportError:
-    pass
+from abc import ABC, abstractmethod
+
 
 class OnPolicy(ABC):
     def __init__(
@@ -20,6 +15,7 @@ class OnPolicy(ABC):
         policy,
         env_spec,
         loggers,
+        optimizers,
         learning_rate,
         n_steps,
         batch_size,
@@ -41,6 +37,7 @@ class OnPolicy(ABC):
         self.env_spec = env_spec
         self.env_spec_eval = env_spec_eval if env_spec_eval is not None else env_spec
         self.loggers = loggers
+        self.optimizers = optimizers
         self.learning_rate = learning_rate
         self.n_steps = n_steps
         self.batch_size = batch_size
@@ -90,6 +87,15 @@ class OnPolicy(ABC):
             raise ValueError("env_spec must be a string or a callable that returns an environment.")
         return env
 
+    def train_step(self, batch):
+        for optimizer in self.optimizers.values():
+            optimizer.zero_grad()
+        loss = self.loss_module(batch)
+        loss.backward()
+        for optimizer in self.optimizers.values():
+            optimizer.step()
+        return loss
+
     def train(self):
         collected_frames = 0
 
@@ -135,10 +141,6 @@ class OnPolicy(ABC):
         avg_return = torch.cat(test_rewards, 0).mean().item()
         for logger in self.loggers:
             logger.log_scalar({"eval_avg_return": avg_return}, step=epoch)
-
-    @abstractmethod
-    def train_step(self, batch):
-        pass
 
 def dump_video(module):
     if isinstance(module, VideoRecorder):

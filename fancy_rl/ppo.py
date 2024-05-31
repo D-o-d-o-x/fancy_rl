@@ -1,11 +1,9 @@
 import torch
-import torch.nn as nn
+from torchrl.modules import ActorValueOperator, ProbabilisticActor
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value.advantages import GAE
-from torchrl.record.loggers import get_logger
-from on_policy import OnPolicy
-from policy import Actor, Critic
-import gymnasium as gym
+from fancy_rl.on_policy import OnPolicy
+from fancy_rl.policy import Actor, Critic, SharedModule
 
 class PPO(OnPolicy):
     def __init__(
@@ -14,8 +12,9 @@ class PPO(OnPolicy):
         loggers=None,
         actor_hidden_sizes=[64, 64],
         critic_hidden_sizes=[64, 64],
-        actor_activation_fn="ReLU",
-        critic_activation_fn="ReLU",
+        actor_activation_fn="Tanh",
+        critic_activation_fn="Tanh",
+        shared_stem_sizes=[64],
         learning_rate=3e-4,
         n_steps=2048,
         batch_size=64,
@@ -33,21 +32,45 @@ class PPO(OnPolicy):
         env_spec_eval=None,
         eval_episodes=10,
     ):
+        device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
         # Initialize environment to get observation and action space sizes
-        env = self.make_env(env_spec)
+        self.env_spec = env_spec
+        env = self.make_env()
         obs_space = env.observation_space
         act_space = env.action_space
 
-        actor_activation_fn = getattr(nn, actor_activation_fn)
-        critic_activation_fn = getattr(nn, critic_activation_fn)
+        # Define the shared, actor, and critic modules
+        self.shared_module = SharedModule(obs_space, shared_stem_sizes, actor_activation_fn, device)
+        self.actor = Actor(self.shared_module, act_space, actor_hidden_sizes, actor_activation_fn, device)
+        self.critic = Critic(self.shared_module, critic_hidden_sizes, critic_activation_fn, device)
 
-        self.actor = Actor(obs_space, act_space, hidden_sizes=actor_hidden_sizes, activation_fn=actor_activation_fn)
-        self.critic = Critic(obs_space, hidden_sizes=critic_hidden_sizes, activation_fn=critic_activation_fn)
+        # Combine into an ActorValueOperator
+        self.ac_module = ActorValueOperator(
+            self.shared_module,
+            self.actor,
+            self.critic
+        )
+
+        # Define the policy as a ProbabilisticActor
+        self.policy = ProbabilisticActor(
+            module=self.ac_module.get_policy_operator(),
+            in_keys=["loc", "scale"],
+            out_keys=["action"],
+            distribution_class=torch.distributions.Normal,
+            return_log_prob=True
+        )
+
+        optimizers = {
+            "actor": torch.optim.Adam(self.actor.parameters(), lr=learning_rate),
+            "critic": torch.optim.Adam(self.critic.parameters(), lr=learning_rate)
+        }
 
         super().__init__(
-            policy=self.actor,
+            policy=self.policy,
             env_spec=env_spec,
             loggers=loggers,
+            optimizers=optimizers,
             learning_rate=learning_rate,
             n_steps=n_steps,
             batch_size=batch_size,
@@ -82,15 +105,3 @@ class PPO(OnPolicy):
             critic_coef=self.critic_coef,
             normalize_advantage=self.normalize_advantage,
         )
-
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.learning_rate)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.learning_rate)
-
-    def train_step(self, batch):
-        self.actor_optimizer.zero_grad()
-        self.critic_optimizer.zero_grad()
-        loss = self.loss_module(batch)
-        loss.backward()
-        self.actor_optimizer.step()
-        self.critic_optimizer.step()
-        return loss
