@@ -23,11 +23,10 @@ Fancy RL provides two main components:
 1. **Ready-to-use Classes for PPO / TRPL**: These classes allow you to quickly get started with reinforcement learning algorithms, enjoying the performance and hackability that comes with using TorchRL.
 
    ```python
-   from ppo import PPO
-   import gymnasium as gym
+   from fancy_rl import PPO
 
-   env_spec = "CartPole-v1"
-   ppo = PPO(env_spec)
+   ppo = PPO("CartPole-v1")
+
    ppo.train()
    ```
 
