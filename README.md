@@ -6,7 +6,7 @@
   <br><br>
 </h1>
 
-Fancy RL is a minimalistic and efficient implementation of Proximal Policy Optimization (PPO) and Trust Region Policy Layers (TRPL) using primitives from [torchrl](https://pypi.org/project/torchrl/). Future plans include implementing Soft Actor-Critic (SAC). This library focuses on providing clean, understandable code and reusable modules while leveraging the powerful functionalities of torchrl. We provide optional integration with wandb.
+Fancy RL provides a minimalistic and efficient implementation of Proximal Policy Optimization (PPO) and Trust Region Policy Layers (TRPL) using primitives from [torchrl](https://pypi.org/project/torchrl/). This library focuses on providing clean, understandable code and reusable modules while leveraging the powerful functionalities of torchrl.
 
 ## Installation
 
@@ -22,28 +22,19 @@ Fancy RL provides two main components:
 
 1. **Ready-to-use Classes for PPO / TRPL**: These classes allow you to quickly get started with reinforcement learning algorithms, enjoying the performance and hackability that comes with using TorchRL.
 
-    ```python
-    from fancy_rl.ppo import PPO
-    from fancy_rl.policy import Policy
-    import gymnasium as gym
-    
-    def env_fn():
-        return gym.make("CartPole-v1")
-    
-    # Create policy
-    env = env_fn()
-    policy = Policy(env.observation_space, env.action_space)
-    
-    # Create PPO instance with default config
-    ppo = PPO(policy=policy, env_fn=env_fn)
-    
-    # Train the agent
-    ppo.train()
-    ```
+   ```python
+   from ppo import PPO
+   import gymnasium as gym
 
-    For environments, you can pass any torchrl environments, gymnasium environments (which we handle with a compatibility layer), or a string which we will interpret as a gymnasium ID.
+   env_spec = "CartPole-v1"
+   ppo = PPO(env_spec)
+   ppo.train()
+   ```
 
-2. **Additional Modules for TRPL**: Designed to integrate with torchrl's primitives-first approach, these modules are ideal for building custom algorithms with precise trust region projections. For detailed documentation, refer to the [docs](#).
+   For environments, you can pass any gymnasium environment ID as a string, a function returning a gymnasium environment, or an already instantiated gymnasium environment. Future plans include supporting other torchrl environments.
+   Check 'example/example.py' for a more complete usage example.
+
+2. **Additional Modules for TRPL**: Designed to integrate with torchrl's primitives-first approach, these modules are ideal for building custom algorithms with precise trust region projections.
 
 ### Background on Trust Region Policy Layers (TRPL)
 
