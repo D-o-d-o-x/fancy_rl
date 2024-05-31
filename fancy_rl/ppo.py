@@ -1,17 +1,21 @@
 import torch
-import gymnasium as gym
-from fancy_rl.policy import Policy
-from fancy_rl.loggers import TerminalLogger
-from fancy_rl.on_policy import OnPolicy
+import torch.nn as nn
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value.advantages import GAE
+from torchrl.record.loggers import get_logger
+from on_policy import OnPolicy
+from policy import Actor, Critic
+import gymnasium as gym
 
 class PPO(OnPolicy):
     def __init__(
         self,
-        policy,
-        env_fn,
+        env_spec,
         loggers=None,
+        actor_hidden_sizes=[64, 64],
+        critic_hidden_sizes=[64, 64],
+        actor_activation_fn="ReLU",
+        critic_activation_fn="ReLU",
         learning_rate=3e-4,
         n_steps=2048,
         batch_size=64,
@@ -24,16 +28,25 @@ class PPO(OnPolicy):
         entropy_coef=0.01,
         critic_coef=0.5,
         normalize_advantage=True,
+        clip_range=0.2,
         device=None,
-        clip_epsilon=0.2,
-        **kwargs
+        env_spec_eval=None,
+        eval_episodes=10,
     ):
-        if loggers is None:
-            loggers = [TerminalLogger(push_interval=1)]
+        # Initialize environment to get observation and action space sizes
+        env = self.make_env(env_spec)
+        obs_space = env.observation_space
+        act_space = env.action_space
+
+        actor_activation_fn = getattr(nn, actor_activation_fn)
+        critic_activation_fn = getattr(nn, critic_activation_fn)
+
+        self.actor = Actor(obs_space, act_space, hidden_sizes=actor_hidden_sizes, activation_fn=actor_activation_fn)
+        self.critic = Critic(obs_space, hidden_sizes=critic_hidden_sizes, activation_fn=critic_activation_fn)
 
         super().__init__(
-            policy=policy,
-            env_fn=env_fn,
+            policy=self.actor,
+            env_spec=env_spec,
             loggers=loggers,
             learning_rate=learning_rate,
             n_steps=n_steps,
@@ -47,52 +60,37 @@ class PPO(OnPolicy):
             entropy_coef=entropy_coef,
             critic_coef=critic_coef,
             normalize_advantage=normalize_advantage,
+            clip_range=clip_range,
             device=device,
-            **kwargs
+            env_spec_eval=env_spec_eval,
+            eval_episodes=eval_episodes,
         )
-        
-        self.clip_epsilon = clip_epsilon
+
         self.adv_module = GAE(
             gamma=self.gamma,
             lmbda=self.gae_lambda,
-            value_network=self.policy,
+            value_network=self.critic,
             average_gae=False,
         )
 
         self.loss_module = ClipPPOLoss(
-            actor_network=self.policy,
-            critic_network=self.policy,
-            clip_epsilon=self.clip_epsilon,
+            actor_network=self.actor,
+            critic_network=self.critic,
+            clip_epsilon=self.clip_range,
             loss_critic_type='MSELoss',
             entropy_coef=self.entropy_coef,
             critic_coef=self.critic_coef,
             normalize_advantage=self.normalize_advantage,
         )
 
-        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.learning_rate)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=self.learning_rate)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=self.learning_rate)
 
     def train_step(self, batch):
-        self.optimizer.zero_grad()
+        self.actor_optimizer.zero_grad()
+        self.critic_optimizer.zero_grad()
         loss = self.loss_module(batch)
         loss.backward()
-        self.optimizer.step()
+        self.actor_optimizer.step()
+        self.critic_optimizer.step()
         return loss
-
-    def train(self):
-        self.env = self.env_fn()
-        self.env.reset(seed=self.kwargs.get("seed", None))
-
-        state = self.env.reset(seed=self.kwargs.get("seed", None))
-        episode_return = 0
-        episode_length = 0
-        for t in range(self.total_timesteps):
-            rollout = self.collect_rollouts(state)
-            for batch in self.get_batches(rollout):
-                loss = self.train_step(batch)
-                for logger in self.loggers:
-                    logger.log({
-                        "loss": loss.item()
-                    }, epoch=t)
-                    
-                if (t + 1) % self.eval_interval == 0:
-                    self.evaluate(t)

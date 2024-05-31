@@ -1,13 +1,20 @@
 import torch
 from abc import ABC, abstractmethod
-from fancy_rl.loggers import Logger
+from torchrl.record.loggers import Logger
 from torch.optim import Adam
+from torchrl.collectors import SyncDataCollector
+from torchrl.data import LazyMemmapStorage, TensorDictReplayBuffer
+from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
+from torchrl.envs import ExplorationType, set_exploration_type
+from torchrl.envs.libs.gym import GymWrapper
+from torchrl.record import VideoRecorder
+import gymnasium as gym
 
 class OnPolicy(ABC):
     def __init__(
         self,
         policy,
-        env_fn,
+        env_spec,
         loggers,
         learning_rate,
         n_steps,
@@ -21,11 +28,14 @@ class OnPolicy(ABC):
         entropy_coef,
         critic_coef,
         normalize_advantage,
+        clip_range=0.2,
         device=None,
-        **kwargs
+        eval_episodes=10,
+        env_spec_eval=None,
     ):
         self.policy = policy
-        self.env_fn = env_fn
+        self.env_spec = env_spec
+        self.env_spec_eval = env_spec_eval if env_spec_eval is not None else env_spec
         self.loggers = loggers
         self.learning_rate = learning_rate
         self.n_steps = n_steps
@@ -39,93 +49,93 @@ class OnPolicy(ABC):
         self.entropy_coef = entropy_coef
         self.critic_coef = critic_coef
         self.normalize_advantage = normalize_advantage
+        self.clip_range = clip_range
         self.device = device if device else ("cuda" if torch.cuda.is_available() else "cpu")
+        self.eval_episodes = eval_episodes
 
-        self.kwargs = kwargs
-        self.clip_range = 0.2
+        # Create collector
+        self.collector = SyncDataCollector(
+            create_env_fn=lambda: self.make_env(eval=False),
+            policy=self.policy,
+            frames_per_batch=self.n_steps,
+            total_frames=self.total_timesteps,
+            device=self.device,
+            storing_device=self.device,
+            max_frames_per_traj=-1,
+        )
+
+        # Create data buffer
+        self.sampler = SamplerWithoutReplacement()
+        self.data_buffer = TensorDictReplayBuffer(
+            storage=LazyMemmapStorage(self.n_steps),
+            sampler=self.sampler,
+            batch_size=self.batch_size,
+        )
+
+    def make_env(self, eval=False):
+        """Creates an environment and wraps it if necessary."""
+        env_spec = self.env_spec_eval if eval else self.env_spec
+        if isinstance(env_spec, str):
+            env = gym.make(env_spec)
+            env = GymWrapper(env)
+        elif callable(env_spec):
+            env = env_spec()
+            if isinstance(env, gym.Env):
+                env = GymWrapper(env)
+        else:
+            raise ValueError("env_spec must be a string or a callable that returns an environment.")
+        return env
 
     def train(self):
-        self.env = self.env_fn()
-        self.env.reset(seed=self.kwargs.get("seed", None))
+        collected_frames = 0
 
-        state = self.env.reset(seed=self.kwargs.get("seed", None))
-        episode_return = 0
-        episode_length = 0
-        for t in range(self.total_timesteps):
-            rollout = self.collect_rollouts(state)
-            for batch in self.get_batches(rollout):
-                loss = self.train_step(batch)
-                for logger in self.loggers:
-                    logger.log({
-                        "loss": loss.item()
-                    }, epoch=t)
-                    
-                if (t + 1) % self.eval_interval == 0:
-                    self.evaluate(t)
+        for t, data in enumerate(self.collector):
+            frames_in_batch = data.numel()
+            collected_frames += frames_in_batch
+
+            for _ in range(self.n_epochs):
+                with torch.no_grad():
+                    data = self.adv_module(data)
+                data_reshape = data.reshape(-1)
+                self.data_buffer.extend(data_reshape)
+
+                for batch in self.data_buffer:
+                    batch = batch.to(self.device)
+                    loss = self.train_step(batch)
+                    for logger in self.loggers:
+                        logger.log_scalar({"loss": loss.item()}, step=collected_frames)
+
+            if (t + 1) % self.eval_interval == 0:
+                self.evaluate(t)
+
+            self.collector.update_policy_weights_()
 
     def evaluate(self, epoch):
-        eval_env = self.env_fn()
-        eval_env.reset(seed=self.kwargs.get("seed", None))
-        returns = []
-        for _ in range(self.kwargs.get("eval_episodes", 10)):
-            state = eval_env.reset(seed=self.kwargs.get("seed", None))
-            done = False
-            total_return = 0
-            while not done:
-                with torch.no_grad():
-                    action = (
-                        self.policy.act(state, deterministic=self.eval_deterministic)
-                        if self.eval_deterministic
-                        else self.policy.act(state)
-                    )
-                state, reward, done, _ = eval_env.step(action)
-                total_return += reward
-            returns.append(total_return)
+        eval_env = self.make_env(eval=True)
+        eval_env.eval()
 
-        avg_return = sum(returns) / len(returns)
+        test_rewards = []
+        for _ in range(self.eval_episodes):
+            with torch.no_grad(), set_exploration_type(ExplorationType.MODE):
+                td_test = eval_env.rollout(
+                    policy=self.policy,
+                    auto_reset=True,
+                    auto_cast_to_device=True,
+                    break_when_any_done=True,
+                    max_steps=10_000_000,
+                )
+                reward = td_test["next", "episode_reward"][td_test["next", "done"]]
+                test_rewards.append(reward.cpu())
+                eval_env.apply(dump_video)
+        
+        avg_return = torch.cat(test_rewards, 0).mean().item()
         for logger in self.loggers:
-            logger.log({"eval_avg_return": avg_return}, epoch=epoch)
-    
-    def collect_rollouts(self, state):
-        # Collect rollouts logic
-        rollouts = []
-        for _ in range(self.n_steps):
-            action = self.policy.act(state)
-            next_state, reward, done, _ = self.env.step(action)
-            rollouts.append((state, action, reward, next_state, done))
-            state = next_state
-            if done:
-                state = self.env.reset(seed=self.kwargs.get("seed", None))
-        return rollouts
-
-    def get_batches(self, rollouts):
-        data = self.prepare_data(rollouts)
-        n_batches = len(data) // self.batch_size
-        batches = []
-        for _ in range(n_batches):
-            batch_indices = torch.randint(0, len(data), (self.batch_size,))
-            batch = data[batch_indices]
-            batches.append(batch)
-        return batches
-
-    def prepare_data(self, rollouts):
-        obs, actions, rewards, next_obs, dones = zip(*rollouts)
-        obs = torch.tensor(obs, dtype=torch.float32)
-        actions = torch.tensor(actions, dtype=torch.int64)
-        rewards = torch.tensor(rewards, dtype=torch.float32)
-        next_obs = torch.tensor(next_obs, dtype=torch.float32)
-        dones = torch.tensor(dones, dtype=torch.float32)
-
-        data = {
-            "obs": obs,
-            "actions": actions,
-            "rewards": rewards,
-            "next_obs": next_obs,
-            "dones": dones
-        }
-        data = self.adv_module(data)
-        return data
+            logger.log_scalar({"eval_avg_return": avg_return}, step=epoch)
 
     @abstractmethod
     def train_step(self, batch):
         pass
+
+def dump_video(module):
+    if isinstance(module, VideoRecorder):
+        module.dump()
