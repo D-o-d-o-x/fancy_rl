@@ -8,6 +8,9 @@
 
 Fancy RL provides a minimalistic and efficient implementation of Proximal Policy Optimization (PPO) and Trust Region Policy Layers (TRPL) using primitives from [torchrl](https://pypi.org/project/torchrl/). This library focuses on providing clean, understandable code and reusable modules while leveraging the powerful functionalities of torchrl.
 
+| :exclamation: This project is still WIP and not ready to be used. |
+| ------------------------------------------------------------ |
+
 ## Installation
 
 Fancy RL requires Python 3.7-3.11. (TorchRL currently does not support Python 3.12)
@@ -48,6 +51,17 @@ To run the test suite:
 ```bash
 pytest test/test_ppo.py
 ```
+
+## TODO
+
+- [ ] Test / Benchmark PPO
+- [ ] Refactor Modules for TRPL
+- [ ] Get TRPL working
+- [ ] Test / Benchmark TRPL
+- [ ] Make contextual covariance optional
+- [ ] Allow full-cov via chol
+- [ ] Write docs / extend README
+- [ ] (Implement SAC?)
 
 ## Contributing
 
