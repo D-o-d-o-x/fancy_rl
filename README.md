@@ -34,7 +34,7 @@ Fancy RL provides two main components:
 
 2. **Additional Modules for TRPL**: Designed to integrate with torchrl's primitives-first approach, these modules are ideal for building custom algorithms with precise trust region projections.
 
-### Background on Trust Region Policy Layers (TRPL)
+## Background on Trust Region Policy Layers (TRPL)
 
 Trust region methods are essential in reinforcement learning for ensuring robust policy updates. Traditional methods like TRPO and PPO use approximations, which can sometimes violate constraints or fail to find optimal solutions. To address these issues, TRPL provides differentiable neural network layers that enforce trust regions through closed-form projections for deep Gaussian policies. These layers formalize trust regions individually for each state and complement existing reinforcement learning algorithms.
 
