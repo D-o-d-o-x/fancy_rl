@@ -33,6 +33,7 @@ Fancy RL provides two main components:
    For environments, you can pass any [gymnasium](https://gymnasium.farama.org/) or [Fancy Gym](https://alrhub.github.io/fancy_gym/) environment ID as a string, a function returning a gymnasium or torchrl environment, an already instantiated gymnasium or torchrl environment, or a dict that will be passed to gymnasium.make. Check 'example/example.py' for a more complete usage example.
 
 2. **Additional Modules for TRPL**: Designed to integrate with torchrl's primitives-first approach, these modules are ideal for building custom algorithms with precise trust region projections.
+   Oh, you want documentation for these? To bad... (TODO)
 
 ## Background on Trust Region Policy Layers (TRPL)
 
