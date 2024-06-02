@@ -83,6 +83,8 @@ class OnPolicy(ABC):
             env = env_spec()
             if isinstance(env, gym.Env):
                 env = GymWrapper(env)
+        elif isinstance(env, gym.Env):
+            env = GymWrapper(env)
         else:
             raise ValueError("env_spec must be a string or a callable that returns an environment.")
         return env
