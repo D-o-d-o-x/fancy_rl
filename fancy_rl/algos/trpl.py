@@ -5,7 +5,7 @@ from fancy_rl.algos.on_policy import OnPolicy
 from fancy_rl.policy import Actor, Critic
 from fancy_rl.objectives import TRPLLoss
 
-class PPO(OnPolicy):
+class TRPL(OnPolicy):
     def __init__(
         self,
         env_spec,
