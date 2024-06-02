@@ -3,13 +3,13 @@ from torchrl.modules import ActorValueOperator, ProbabilisticActor
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value.advantages import GAE
 from fancy_rl.algos.on_policy import OnPolicy
-from fancy_rl.policy import Actor, Critic, SharedModule
+from fancy_rl.policy import Actor, Critic
 
 class PPO(OnPolicy):
     def __init__(
         self,
         env_spec,
-        loggers=None,
+        loggers=[],
         actor_hidden_sizes=[64, 64],
         critic_hidden_sizes=[64, 64],
         actor_activation_fn="Tanh",
@@ -33,6 +33,7 @@ class PPO(OnPolicy):
         eval_episodes=10,
     ):
         device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device
 
         # Initialize environment to get observation and action space sizes
         self.env_spec = env_spec
@@ -40,21 +41,10 @@ class PPO(OnPolicy):
         obs_space = env.observation_space
         act_space = env.action_space
 
-        # Define the shared, actor, and critic modules
-        self.shared_module = SharedModule(obs_space, shared_stem_sizes, actor_activation_fn, device)
-        self.actor = Actor(self.shared_module, act_space, actor_hidden_sizes, actor_activation_fn, device)
-        self.critic = Critic(self.shared_module, critic_hidden_sizes, critic_activation_fn, device)
-
-        # Combine into an ActorValueOperator
-        self.ac_module = ActorValueOperator(
-            self.shared_module,
-            self.actor,
-            self.critic
-        )
-
-        # Define the policy as a ProbabilisticActor
-        policy = ProbabilisticActor(
-            module=self.ac_module.get_policy_operator(),
+        self.critic = Critic(obs_space, critic_hidden_sizes, critic_activation_fn, device)
+        actor_net = Actor(obs_space, act_space, actor_hidden_sizes, actor_activation_fn, device)
+        self.actor = ProbabilisticActor(
+            module=actor_net,
             in_keys=["loc", "scale"],
             out_keys=["action"],
             distribution_class=torch.distributions.Normal,
@@ -67,7 +57,6 @@ class PPO(OnPolicy):
         }
 
         super().__init__(
-            policy=policy,
             env_spec=env_spec,
             loggers=loggers,
             optimizers=optimizers,
@@ -76,14 +65,12 @@ class PPO(OnPolicy):
             batch_size=batch_size,
             n_epochs=n_epochs,
             gamma=gamma,
-            gae_lambda=gae_lambda,
             total_timesteps=total_timesteps,
             eval_interval=eval_interval,
             eval_deterministic=eval_deterministic,
             entropy_coef=entropy_coef,
             critic_coef=critic_coef,
             normalize_advantage=normalize_advantage,
-            clip_range=clip_range,
             device=device,
             env_spec_eval=env_spec_eval,
             eval_episodes=eval_episodes,
@@ -91,7 +78,7 @@ class PPO(OnPolicy):
 
         self.adv_module = GAE(
             gamma=self.gamma,
-            lmbda=self.gae_lambda,
+            lmbda=gae_lambda,
             value_network=self.critic,
             average_gae=False,
         )
@@ -99,8 +86,8 @@ class PPO(OnPolicy):
         self.loss_module = ClipPPOLoss(
             actor_network=self.actor,
             critic_network=self.critic,
-            clip_epsilon=self.clip_range,
-            loss_critic_type='MSELoss',
+            clip_epsilon=clip_range,
+            loss_critic_type='l2',
             entropy_coef=self.entropy_coef,
             critic_coef=self.critic_coef,
             normalize_advantage=self.normalize_advantage,

@@ -6,13 +6,12 @@ from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
 from torchrl.envs.libs.gym import GymWrapper
 from torchrl.envs import ExplorationType, set_exploration_type
 from torchrl.record import VideoRecorder
-from abc import ABC, abstractmethod
-
+from tensordict import LazyStackedTensorDict, TensorDict
+from abc import ABC
 
 class OnPolicy(ABC):
     def __init__(
         self,
-        policy,
         env_spec,
         loggers,
         optimizers,
@@ -21,19 +20,16 @@ class OnPolicy(ABC):
         batch_size,
         n_epochs,
         gamma,
-        gae_lambda,
         total_timesteps,
         eval_interval,
         eval_deterministic,
         entropy_coef,
         critic_coef,
         normalize_advantage,
-        clip_range=0.2,
         device=None,
         eval_episodes=10,
         env_spec_eval=None,
     ):
-        self.policy = policy
         self.env_spec = env_spec
         self.env_spec_eval = env_spec_eval if env_spec_eval is not None else env_spec
         self.loggers = loggers
@@ -43,21 +39,19 @@ class OnPolicy(ABC):
         self.batch_size = batch_size
         self.n_epochs = n_epochs
         self.gamma = gamma
-        self.gae_lambda = gae_lambda
         self.total_timesteps = total_timesteps
         self.eval_interval = eval_interval
         self.eval_deterministic = eval_deterministic
         self.entropy_coef = entropy_coef
         self.critic_coef = critic_coef
         self.normalize_advantage = normalize_advantage
-        self.clip_range = clip_range
         self.device = device if device else ("cuda" if torch.cuda.is_available() else "cpu")
         self.eval_episodes = eval_episodes
 
         # Create collector
         self.collector = SyncDataCollector(
             create_env_fn=lambda: self.make_env(eval=False),
-            policy=self.policy,
+            policy=self.actor,
             frames_per_batch=self.n_steps,
             total_frames=self.total_timesteps,
             device=self.device,
@@ -78,13 +72,13 @@ class OnPolicy(ABC):
         env_spec = self.env_spec_eval if eval else self.env_spec
         if isinstance(env_spec, str):
             env = gym.make(env_spec)
-            env = GymWrapper(env)
+            env = GymWrapper(env).to(self.device)
         elif callable(env_spec):
             env = env_spec()
             if isinstance(env, gym.Env):
-                env = GymWrapper(env)
+                env = GymWrapper(env).to(self.device)
         elif isinstance(env, gym.Env):
-            env = GymWrapper(env)
+            env = GymWrapper(env).to(self.device)
         else:
             raise ValueError("env_spec must be a string or a callable that returns an environment.")
         return env
@@ -92,7 +86,8 @@ class OnPolicy(ABC):
     def train_step(self, batch):
         for optimizer in self.optimizers.values():
             optimizer.zero_grad()
-        loss = self.loss_module(batch)
+        losses = self.loss_module(batch)
+        loss = losses['loss_objective'] + losses["loss_entropy"] + losses["loss_critic"]
         loss.backward()
         for optimizer in self.optimizers.values():
             optimizer.step()
@@ -130,7 +125,7 @@ class OnPolicy(ABC):
         for _ in range(self.eval_episodes):
             with torch.no_grad(), set_exploration_type(ExplorationType.MODE):
                 td_test = eval_env.rollout(
-                    policy=self.policy,
+                    policy=self.actor,
                     auto_reset=True,
                     auto_cast_to_device=True,
                     break_when_any_done=True,
