@@ -9,6 +9,8 @@ from torchrl.record import VideoRecorder
 from tensordict import LazyStackedTensorDict, TensorDict
 from abc import ABC
 
+from fancy_rl.loggers import TerminalLogger
+
 class OnPolicy(ABC):
     def __init__(
         self,
@@ -32,7 +34,7 @@ class OnPolicy(ABC):
     ):
         self.env_spec = env_spec
         self.env_spec_eval = env_spec_eval if env_spec_eval is not None else env_spec
-        self.loggers = loggers
+        self.loggers = loggers if loggers != None else [TerminalLogger(None, None)]
         self.optimizers = optimizers
         self.learning_rate = learning_rate
         self.n_steps = n_steps
@@ -110,7 +112,7 @@ class OnPolicy(ABC):
                     batch = batch.to(self.device)
                     loss = self.train_step(batch)
                     for logger in self.loggers:
-                        logger.log_scalar({"loss": loss.item()}, step=collected_frames)
+                        logger.log_scalar("loss", loss.item(), step=collected_frames)
 
             if (t + 1) % self.eval_interval == 0:
                 self.evaluate(t)

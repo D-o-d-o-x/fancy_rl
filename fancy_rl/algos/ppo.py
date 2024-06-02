@@ -1,5 +1,5 @@
 import torch
-from torchrl.modules import ActorValueOperator, ProbabilisticActor
+from torchrl.modules import ProbabilisticActor
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value.advantages import GAE
 from fancy_rl.algos.on_policy import OnPolicy
@@ -9,12 +9,11 @@ class PPO(OnPolicy):
     def __init__(
         self,
         env_spec,
-        loggers=[],
+        loggers=None,
         actor_hidden_sizes=[64, 64],
         critic_hidden_sizes=[64, 64],
         actor_activation_fn="Tanh",
         critic_activation_fn="Tanh",
-        shared_stem_sizes=[64],
         learning_rate=3e-4,
         n_steps=2048,
         batch_size=64,
