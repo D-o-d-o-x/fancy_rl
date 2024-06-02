@@ -2,7 +2,7 @@ import torch
 from torchrl.modules import ActorValueOperator, ProbabilisticActor
 from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value.advantages import GAE
-from fancy_rl.on_policy import OnPolicy
+from fancy_rl.algos.on_policy import OnPolicy
 from fancy_rl.policy import Actor, Critic, SharedModule
 
 class PPO(OnPolicy):

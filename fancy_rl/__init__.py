@@ -4,6 +4,6 @@ try:
 except ImportError:
     pass
 
-from fancy_rl.ppo import PPO
+from fancy_rl.algos import PPO
 
 __all__ = ["PPO"]
