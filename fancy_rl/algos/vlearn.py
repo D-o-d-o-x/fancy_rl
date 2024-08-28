@@ -5,10 +5,9 @@ from torchrl.modules import ProbabilisticActor, ValueOperator
 from torchrl.collectors import SyncDataCollector
 from torchrl.data import TensorDictReplayBuffer, LazyMemmapStorage
 
-from fancy_rl.utils import get_env, get_actor, get_critic
-from fancy_rl.modules.vlearn_loss import VLEARNLoss
-from fancy_rl.modules.projection import get_vlearn_projection
-from fancy_rl.modules.squashed_normal import get_squashed_normal
+from fancy_rl.objectives.vlearn import VLEARNLoss
+from fancy_rl.projections import get_vlearn_projection
+from fancy_rl.utils import get_squashed_normal
 
 class VLEARN:
     def __init__(self, env_id: str, device: str = "cpu", **kwargs: Any):
