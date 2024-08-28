@@ -15,23 +15,17 @@ class OnPolicy(Algo):
         env_spec,
         optimizers,
         loggers=None,
-        actor_hidden_sizes=[64, 64],
-        critic_hidden_sizes=[64, 64],
-        actor_activation_fn="Tanh",
-        critic_activation_fn="Tanh",
         learning_rate=3e-4,
         n_steps=2048,
         batch_size=64,
         n_epochs=10,
         gamma=0.99,
-        gae_lambda=0.95,
         total_timesteps=1e6,
         eval_interval=2048,
         eval_deterministic=True,
         entropy_coef=0.01,
         critic_coef=0.5,
         normalize_advantage=True,
-        clip_range=0.2,
         env_spec_eval=None,
         eval_episodes=10,
         device=None,
@@ -77,15 +71,25 @@ class OnPolicy(Algo):
             batch_size=self.batch_size,
         )
 
+    def pre_process_batch(self, batch):
+        return batch
+
+    def post_process_batch(self, batch):
+        pass
 
     def train_step(self, batch):
+        batch = self.pre_process_batch(batch)
+        
         for optimizer in self.optimizers.values():
             optimizer.zero_grad()
         losses = self.loss_module(batch)
-        loss = losses['loss_objective'] + losses["loss_entropy"] + losses["loss_critic"]
+        loss = sum(losses.values())  # Sum all losses
         loss.backward()
         for optimizer in self.optimizers.values():
             optimizer.step()
+        
+        self.post_process_batch(batch)
+        
         return loss
 
     def train(self):

@@ -4,6 +4,7 @@ from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value.advantages import GAE
 from fancy_rl.algos.on_policy import OnPolicy
 from fancy_rl.policy import Actor, Critic
+from fancy_rl.projections import get_projection  # Updated import
 
 class PPO(OnPolicy):
     def __init__(
