@@ -1,13 +1,35 @@
-[build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
+   [build-system]
+   requires = ["setuptools>=61.0", "wheel"]
+   build-backend = "setuptools.build_meta"
 
-[project]
-name = "fancy_rl"
-version = "0.1.0"
-dependencies = [
-    "gymnasium",
-    "pyyaml",
-    "torch",
-    "torchrl"
-]
+   [project]
+   name = "fancy_rl"
+   version = "0.1.0"
+   description = "Minimalistic and efficient implementations of PPO and TRPL for torchrl"
+   authors = [{name = "Dominik Roth", email = "mail@dominik-roth.eu"}]
+   readme = "README.md"
+   requires-python = ">=3.7,<3.12"
+   classifiers = [
+       "Development Status :: 3 - Alpha",
+       "Intended Audience :: Developers",
+       "License :: OSI Approved :: MIT License",
+       "Programming Language :: Python :: 3",
+       "Programming Language :: Python :: 3.7",
+       "Programming Language :: Python :: 3.8",
+       "Programming Language :: Python :: 3.9",
+       "Programming Language :: Python :: 3.10",
+       "Programming Language :: Python :: 3.11",
+   ]
+   dependencies = [
+       "numpy",
+       "torch",
+       "gymnasium",
+       "tensordict",
+       "torchrl",
+   ]
+
+   [project.urls]
+   Homepage = "https://git.dominik-roth.eu/dodox/fancy_rl"
+
+   [project.optional-dependencies]
+   dev = ["pytest"]
