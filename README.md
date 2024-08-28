@@ -8,8 +8,8 @@
 
 Fancy RL provides a minimalistic and efficient implementation of Proximal Policy Optimization (PPO) and Trust Region Policy Layers (TRPL) using primitives from [torchrl](https://pypi.org/project/torchrl/). This library focuses on providing clean, understandable code and reusable modules while leveraging the powerful functionalities of torchrl.
 
-| :exclamation: This project is still WIP and not ready to be used. |
-| ----------------------------------------------------------------- |
+| :exclamation: This project is still WIP and not ready to be used. (Problems with trochdict routing are a pain to debug...) |
+| -------------------------------------------------------------------------------------------------------------------------- |
 
 ## Installation
 
