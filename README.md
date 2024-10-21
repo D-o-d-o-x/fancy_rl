@@ -52,17 +52,34 @@ To run the test suite:
 pytest test/test_ppo.py
 ```
 
-## TODO
+## Status
 
+### Implemented Features
+- Proximal Policy Optimization (PPO) algorithm
+- Trust Region Policy Layers (TRPL) algorithm (WIP)
+- Support for continuous and discrete action spaces
+- Multiple projection methods (Rewritten for MIT License Compatability):
+  - KL Divergence projection
+  - Frobenius norm projection
+  - Wasserstein distance projection
+  - Identity projection (Eq to PPO)
+- Configurable neural network architectures for actor and critic
+- Logging support (Terminal and WandB, extendable)
+
+### TODO
+- [ ] All PPO Tests green
 - [ ] Better / more logging
 - [ ] Test / Benchmark PPO
 - [ ] Refactor Modules for TRPL
 - [ ] Get TRPL working
-- [ ] Test / Benchmark TRPL
+- [ ] All TRPL Tests green
 - [ ] Make contextual covariance optional
 - [ ] Allow full-cov via chol
+- [ ] Test / Benchmark TRPL
 - [ ] Write docs / extend README
-- [ ] (Implement SAC?)
+- [ ] Test func of non-gym envs
+- [ ] Implement SAC
+- [ ] Implement VLEARN
 
 ## Contributing
 
