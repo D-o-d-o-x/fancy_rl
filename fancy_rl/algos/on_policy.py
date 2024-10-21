@@ -55,7 +55,7 @@ class OnPolicy(Algo):
         # Create collector
         self.collector = SyncDataCollector(
             create_env_fn=lambda: self.make_env(eval=False),
-            policy=self.actor,
+            policy=self.prob_actor,
             frames_per_batch=self.n_steps,
             total_frames=self.total_timesteps,
             device=self.device,

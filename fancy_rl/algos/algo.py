@@ -3,6 +3,7 @@ import gymnasium as gym
 from torchrl.envs.libs.gym import GymWrapper
 from torchrl.record import VideoRecorder
 from abc import ABC
+from tensordict import TensorDict
 
 from fancy_rl.loggers import TerminalLogger
 
@@ -53,12 +54,11 @@ class Algo(ABC):
             env = GymWrapper(env).to(self.device)
         elif callable(env_spec):
             env = env_spec()
-            if isinstance(env, gym.Env):
-                env = GymWrapper(env).to(self.device)
-        elif isinstance(env, gym.Env):
+            if not (isinstance(env, gym.Env) or isinstance(env, gym.core.Wrapper)):
+                raise ValueError("env_spec must be a string or a callable that returns an environment. Was a callable that returned a {}".format(type(env)))
             env = GymWrapper(env).to(self.device)
         else:
-            raise ValueError("env_spec must be a string or a callable that returns an environment.")
+            raise ValueError("env_spec must be a string or a callable that returns an environment. Was a {}".format(type(env_spec)))
         return env
 
     def train_step(self, batch):
@@ -70,6 +70,20 @@ class Algo(ABC):
     def evaluate(self, epoch):
         raise NotImplementedError("evaluate method must be implemented in subclass.")
 
-def dump_video(module):
-    if isinstance(module, VideoRecorder):
-        module.dump()
+    def predict(
+        self,
+        observation,
+        state=None,
+        deterministic=False
+    ):
+        with torch.no_grad():
+            obs_tensor = torch.as_tensor(observation, device=self.device).unsqueeze(0)
+            td = TensorDict({"observation": obs_tensor}, batch_size=[1])
+            
+            action_td = self.prob_actor(td)
+            action = action_td["action"]
+            
+            # We're not using recurrent policies, so we'll always return None for the state
+            next_state = None
+            
+            return action.squeeze(0).cpu().numpy(), next_state

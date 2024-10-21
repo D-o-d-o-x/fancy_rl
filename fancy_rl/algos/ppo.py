@@ -4,7 +4,7 @@ from torchrl.objectives import ClipPPOLoss
 from torchrl.objectives.value.advantages import GAE
 from fancy_rl.algos.on_policy import OnPolicy
 from fancy_rl.policy import Actor, Critic
-from fancy_rl.projections import get_projection  # Updated import
+from fancy_rl.utils import is_discrete_space
 
 class PPO(OnPolicy):
     def __init__(
@@ -31,7 +31,10 @@ class PPO(OnPolicy):
         device=None,
         env_spec_eval=None,
         eval_episodes=10,
+        full_covariance=False,
     ):
+        self.clip_range = clip_range
+
         device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.device = device
 
@@ -41,15 +44,29 @@ class PPO(OnPolicy):
         obs_space = env.observation_space
         act_space = env.action_space
 
+        self.discrete = is_discrete_space(act_space)
+
         self.critic = Critic(obs_space, critic_hidden_sizes, critic_activation_fn, device)
-        actor_net = Actor(obs_space, act_space, actor_hidden_sizes, actor_activation_fn, device)
-        self.actor = ProbabilisticActor(
-            module=actor_net,
-            in_keys=["loc", "scale"],
-            out_keys=["action"],
-            distribution_class=torch.distributions.Normal,
-            return_log_prob=True
-        )
+        self.actor = Actor(obs_space, act_space, actor_hidden_sizes, actor_activation_fn, device, full_covariance=full_covariance)
+
+        if self.discrete:
+            distribution_class = torch.distributions.Categorical
+            distribution_kwargs = {"logits": "action_logits"}
+        else:
+            if full_covariance:
+                distribution_class = torch.distributions.MultivariateNormal
+                in_keys = ["loc", "scale_tril"]
+            else:
+                distribution_class = torch.distributions.Normal
+                in_keys = ["loc", "scale"]
+
+            self.prob_actor = ProbabilisticActor(
+                module=self.actor,
+                distribution_class=distribution_class,
+                return_log_prob=True,
+                in_keys=in_keys,
+                out_keys=["action"]
+            )
 
         optimizers = {
             "actor": torch.optim.Adam(self.actor.parameters(), lr=learning_rate),
@@ -86,7 +103,7 @@ class PPO(OnPolicy):
         self.loss_module = ClipPPOLoss(
             actor_network=self.actor,
             critic_network=self.critic,
-            clip_epsilon=clip_range,
+            clip_epsilon=self.clip_range,
             loss_critic_type='l2',
             entropy_coef=self.entropy_coef,
             critic_coef=self.critic_coef,

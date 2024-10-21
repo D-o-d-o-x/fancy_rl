@@ -10,7 +10,36 @@ from fancy_rl.algos.on_policy import OnPolicy
 from fancy_rl.policy import Actor, Critic
 from fancy_rl.projections import get_projection, BaseProjection
 from fancy_rl.objectives import TRPLLoss
+from fancy_rl.utils import is_discrete_space
 from copy import deepcopy
+from tensordict.nn import TensorDictModule
+from tensordict import TensorDict
+
+class ProjectedActor(TensorDictModule):
+    def __init__(self, raw_actor, old_actor, projection):
+        combined_module = self.CombinedModule(raw_actor, old_actor, projection)
+        super().__init__(
+            module=combined_module,
+            in_keys=raw_actor.in_keys,
+            out_keys=raw_actor.out_keys
+        )
+        self.raw_actor = raw_actor
+        self.old_actor = old_actor
+        self.projection = projection
+
+    class CombinedModule(nn.Module):
+        def __init__(self, raw_actor, old_actor, projection):
+            super().__init__()
+            self.raw_actor = raw_actor
+            self.old_actor = old_actor
+            self.projection = projection
+
+        def forward(self, tensordict):
+            raw_params = self.raw_actor(tensordict)
+            old_params = self.old_actor(tensordict)
+            combined_params = TensorDict({**raw_params, **{f"old_{key}": value for key, value in old_params.items()}}, batch_size=tensordict.batch_size)
+            projected_params = self.projection(combined_params)
+            return projected_params
 
 class TRPL(OnPolicy):
     def __init__(
@@ -40,6 +69,7 @@ class TRPL(OnPolicy):
         device=None,
         env_spec_eval=None,
         eval_episodes=10,
+        full_covariance=False,
     ):
         device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.device = device
@@ -50,8 +80,11 @@ class TRPL(OnPolicy):
         obs_space = env.observation_space
         act_space = env.action_space
 
+        assert not is_discrete_space(act_space), "TRPL does not support discrete action spaces"
+
         self.critic = Critic(obs_space, critic_hidden_sizes, critic_activation_fn, device)
-        actor_net = Actor(obs_space, act_space, actor_hidden_sizes, actor_activation_fn, device)
+        self.raw_actor = Actor(obs_space, act_space, actor_hidden_sizes, actor_activation_fn, device, full_covariance=full_covariance)
+        self.old_actor = Actor(obs_space, act_space, actor_hidden_sizes, actor_activation_fn, device, full_covariance=full_covariance)
 
         # Handle projection_class
         if isinstance(projection_class, str):
@@ -60,20 +93,27 @@ class TRPL(OnPolicy):
             raise ValueError("projection_class must be a string or a subclass of BaseProjection")
 
         self.projection = projection_class(
-            in_keys=["loc", "scale"],
-            out_keys=["loc", "scale"],
-            trust_region_bound_mean=trust_region_bound_mean,
-            trust_region_bound_cov=trust_region_bound_cov
+            in_keys=["loc", "scale_tril", "old_loc", "old_scale_tril"] if full_covariance else ["loc", "scale", "old_loc", "old_scale"],
+            out_keys=["loc", "scale_tril"] if full_covariance else ["loc", "scale"],
+            mean_bound=trust_region_bound_mean,
+            cov_bound=trust_region_bound_cov
         )
 
-        self.actor = ProbabilisticActor(
-            module=actor_net,
-            in_keys=["observation"],
-            out_keys=["loc", "scale"],
-            distribution_class=torch.distributions.Normal,
-            return_log_prob=True
+        self.actor = ProjectedActor(self.raw_actor, self.old_actor, self.projection)
+
+        if full_covariance:
+            distribution_class = torch.distributions.MultivariateNormal
+            distribution_kwargs = {"loc": "loc", "scale_tril": "scale_tril"}
+        else:
+            distribution_class = torch.distributions.Normal
+            distribution_kwargs = {"loc": "loc", "scale": "scale"}
+
+        self.prob_actor = ProbabilisticActor(
+            module=self.actor,
+            distribution_class=distribution_class,
+            return_log_prob=True,
+            in_keys=distribution_kwargs,
         )
-        self.old_actor = deepcopy(self.actor)
 
         self.trust_region_coef = trust_region_coef
         self.loss_module = TRPLLoss(
@@ -88,7 +128,7 @@ class TRPL(OnPolicy):
         )
 
         optimizers = {
-            "actor": torch.optim.Adam(self.actor.parameters(), lr=learning_rate),
+            "actor": torch.optim.Adam(self.raw_actor.parameters(), lr=learning_rate),
             "critic": torch.optim.Adam(self.critic.parameters(), lr=learning_rate)
         }
 
@@ -119,23 +159,7 @@ class TRPL(OnPolicy):
         )
 
     def update_old_policy(self):
-        self.old_actor.load_state_dict(self.actor.state_dict())
-
-    def project_policy(self, obs):
-        with torch.no_grad():
-            old_dist = self.old_actor(obs)
-        new_dist = self.actor(obs)
-        projected_params = self.projection.project(new_dist, old_dist)
-        return projected_params
-
-    def pre_update(self, tensordict):
-        obs = tensordict["observation"]
-        projected_dist = self.project_policy(obs)
-        
-        # Update tensordict with projected distribution parameters
-        tensordict["projected_loc"] = projected_dist[0]
-        tensordict["projected_scale"] = projected_dist[1]
-        return tensordict
+        self.old_actor.load_state_dict(self.raw_actor.state_dict())
 
     def post_update(self):
         self.update_old_policy()
