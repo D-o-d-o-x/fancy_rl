@@ -2,6 +2,7 @@ import torch
 import cpp_projection
 import numpy as np
 from .base_projection import BaseProjection
+from tensordict.nn import TensorDictModule
 from typing import Dict, Tuple, Any
 
 MAX_EVAL = 1000
@@ -10,57 +11,65 @@ def get_numpy(tensor):
     return tensor.detach().cpu().numpy()
 
 class KLProjection(BaseProjection):
-    def __init__(self, in_keys: list[str], out_keys: list[str], trust_region_coeff: float = 1.0, mean_bound: float = 0.01, cov_bound: float = 0.01, is_diag: bool = True, contextual_std: bool = True):
-        super().__init__(in_keys=in_keys, out_keys=out_keys, trust_region_coeff=trust_region_coeff, mean_bound=mean_bound, cov_bound=cov_bound)
-        self.is_diag = is_diag
-        self.contextual_std = contextual_std
+    def __init__(self, in_keys: list[str], out_keys: list[str], trust_region_coeff: float = 1.0, mean_bound: float = 0.01, cov_bound: float = 0.01, contextual_std: bool = True):
+        super().__init__(in_keys=in_keys, out_keys=out_keys, trust_region_coeff=trust_region_coeff, mean_bound=mean_bound, cov_bound=cov_bound, contextual_std=contextual_std)
 
     def project(self, policy_params: Dict[str, torch.Tensor], old_policy_params: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        mean, std = policy_params["loc"], policy_params["scale_tril"]
-        old_mean, old_std = old_policy_params["loc"], old_policy_params["scale_tril"]
+        mean, scale_or_tril = policy_params["loc"], policy_params[self.in_keys[1]]
+        old_mean, old_scale_or_tril = old_policy_params["loc"], old_policy_params[self.in_keys[1]]
 
-        mean_part, cov_part = self._gaussian_kl((mean, std), (old_mean, old_std))
+        mean_part, cov_part = self._gaussian_kl((mean, scale_or_tril), (old_mean, old_scale_or_tril))
 
         if not self.contextual_std:
-            std = std[:1]
-            old_std = old_std[:1]
+            scale_or_tril = scale_or_tril[:1]
+            old_scale_or_tril = old_scale_or_tril[:1]
             cov_part = cov_part[:1]
 
         proj_mean = self._mean_projection(mean, old_mean, mean_part)
-        proj_std = self._cov_projection(std, old_std, cov_part)
+        proj_scale_or_tril = self._cov_projection(scale_or_tril, old_scale_or_tril, cov_part)
 
         if not self.contextual_std:
-            proj_std = proj_std.expand(mean.shape[0], -1, -1)
+            proj_scale_or_tril = proj_scale_or_tril.expand(mean.shape[0], *proj_scale_or_tril.shape[1:])
 
-        return {"loc": proj_mean, "scale_tril": proj_std}
+        return {"loc": proj_mean, self.out_keys[1]: proj_scale_or_tril}
 
     def get_trust_region_loss(self, policy_params: Dict[str, torch.Tensor], proj_policy_params: Dict[str, torch.Tensor]) -> torch.Tensor:
-        mean, std = policy_params["loc"], policy_params["scale_tril"]
-        proj_mean, proj_std = proj_policy_params["loc"], proj_policy_params["scale_tril"]
-        kl = sum(self._gaussian_kl((mean, std), (proj_mean, proj_std)))
+        mean, scale_or_tril = policy_params["loc"], policy_params[self.in_keys[1]]
+        proj_mean, proj_scale_or_tril = proj_policy_params["loc"], proj_policy_params[self.out_keys[1]]
+        kl = sum(self._gaussian_kl((mean, scale_or_tril), (proj_mean, proj_scale_or_tril)))
         return kl.mean() * self.trust_region_coeff
 
     def _gaussian_kl(self, p: Tuple[torch.Tensor, torch.Tensor], q: Tuple[torch.Tensor, torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        mean, std = p
-        mean_other, std_other = q
+        mean, scale_or_tril = p
+        mean_other, scale_or_tril_other = q
         k = mean.shape[-1]
 
-        maha_part = 0.5 * self._maha(mean, mean_other, std_other)
+        maha_part = 0.5 * self._maha(mean, mean_other, scale_or_tril_other)
 
-        det_term = self._log_determinant(std)
-        det_term_other = self._log_determinant(std_other)
+        det_term = self._log_determinant(scale_or_tril)
+        det_term_other = self._log_determinant(scale_or_tril_other)
 
-        trace_part = self._torch_batched_trace_square(torch.linalg.solve_triangular(std_other, std, upper=False))
+        if self.full_cov:
+            trace_part = self._torch_batched_trace_square(torch.linalg.solve_triangular(scale_or_tril_other, scale_or_tril, upper=False))
+        else:
+            trace_part = torch.sum((scale_or_tril / scale_or_tril_other) ** 2, dim=-1)
+
         cov_part = 0.5 * (trace_part - k + det_term_other - det_term)
 
         return maha_part, cov_part
 
-    def _maha(self, x: torch.Tensor, y: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+    def _maha(self, x: torch.Tensor, y: torch.Tensor, scale_or_tril: torch.Tensor) -> torch.Tensor:
         diff = x - y
-        return torch.sum(torch.square(torch.triangular_solve(diff.unsqueeze(-1), std, upper=False)[0].squeeze(-1)), dim=-1)
+        if self.full_cov:
+            return torch.sum(torch.square(torch.triangular_solve(diff.unsqueeze(-1), scale_or_tril, upper=False)[0].squeeze(-1)), dim=-1)
+        else:
+            return torch.sum(torch.square(diff / scale_or_tril), dim=-1)
 
-    def _log_determinant(self, std: torch.Tensor) -> torch.Tensor:
-        return 2 * torch.log(std.diagonal(dim1=-2, dim2=-1)).sum(-1)
+    def _log_determinant(self, scale_or_tril: torch.Tensor) -> torch.Tensor:
+        if self.full_cov:
+            return 2 * torch.log(scale_or_tril.diagonal(dim1=-2, dim2=-1)).sum(-1)
+        else:
+            return 2 * torch.log(scale_or_tril).sum(-1)
 
     def _torch_batched_trace_square(self, x: torch.Tensor) -> torch.Tensor:
         return torch.sum(x.pow(2), dim=(-2, -1))
@@ -68,49 +77,45 @@ class KLProjection(BaseProjection):
     def _mean_projection(self, mean: torch.Tensor, old_mean: torch.Tensor, mean_part: torch.Tensor) -> torch.Tensor:
         return old_mean + (mean - old_mean) * torch.sqrt(self.mean_bound / (mean_part + 1e-8)).unsqueeze(-1)
 
-    def _cov_projection(self, std: torch.Tensor, old_std: torch.Tensor, cov_part: torch.Tensor) -> torch.Tensor:
-        cov = torch.matmul(std, std.transpose(-1, -2))
-        old_cov = torch.matmul(old_std, old_std.transpose(-1, -2))
-
-        if self.is_diag:
-            mask = cov_part > self.cov_bound
-            proj_std = torch.zeros_like(std)
-            proj_std[~mask] = std[~mask]
-            try:
-                if mask.any():
-                    proj_cov = KLProjectionGradFunctionDiagCovOnly.apply(cov.diagonal(dim1=-2, dim2=-1),
-                                                                         old_cov.diagonal(dim1=-2, dim2=-1),
-                                                                         self.cov_bound)
-                    is_invalid = (proj_cov.mean(dim=-1).isnan() | proj_cov.mean(dim=-1).isinf() | (proj_cov.min(dim=-1).values < 0)) & mask
-                    if is_invalid.any():
-                        proj_std[is_invalid] = old_std[is_invalid]
-                        mask &= ~is_invalid
-                    proj_std[mask] = proj_cov[mask].sqrt().diag_embed()
-            except Exception as e:
-                proj_std = old_std
+    def _cov_projection(self, scale_or_tril: torch.Tensor, old_scale_or_tril: torch.Tensor, cov_part: torch.Tensor) -> torch.Tensor:
+        if self.full_cov:
+            cov = torch.matmul(scale_or_tril, scale_or_tril.transpose(-1, -2))
+            old_cov = torch.matmul(old_scale_or_tril, old_scale_or_tril.transpose(-1, -2))
         else:
-            try:
-                mask = cov_part > self.cov_bound
-                proj_std = torch.zeros_like(std)
-                proj_std[~mask] = std[~mask]
-                if mask.any():
-                    proj_cov = KLProjectionGradFunctionCovOnly.apply(cov, std.detach(), old_std, self.cov_bound)
+            cov = scale_or_tril.pow(2)
+            old_cov = old_scale_or_tril.pow(2)
+
+        mask = cov_part > self.cov_bound
+        proj_scale_or_tril = torch.zeros_like(scale_or_tril)
+        proj_scale_or_tril[~mask] = scale_or_tril[~mask]
+
+        try:
+            if mask.any():
+                if self.full_cov:
+                    proj_cov = KLProjectionGradFunctionCovOnly.apply(cov, scale_or_tril.detach(), old_scale_or_tril, self.cov_bound)
                     is_invalid = proj_cov.mean([-2, -1]).isnan() & mask
                     if is_invalid.any():
-                        proj_std[is_invalid] = old_std[is_invalid]
+                        proj_scale_or_tril[is_invalid] = old_scale_or_tril[is_invalid]
                         mask &= ~is_invalid
-                    proj_std[mask], failed_mask = torch.linalg.cholesky_ex(proj_cov[mask])
+                    proj_scale_or_tril[mask], failed_mask = torch.linalg.cholesky_ex(proj_cov[mask])
                     failed_mask = failed_mask.bool()
                     if failed_mask.any():
-                        proj_std[failed_mask] = old_std[failed_mask]
-            except Exception as e:
-                import logging
-                logging.error('Projection failed, taking old cholesky for projection.')
-                print("Projection failed, taking old cholesky for projection.")
-                proj_std = old_std
-                raise e
+                        proj_scale_or_tril[failed_mask] = old_scale_or_tril[failed_mask]
+                else:
+                    proj_cov = KLProjectionGradFunctionDiagCovOnly.apply(cov, old_cov, self.cov_bound)
+                    is_invalid = (proj_cov.mean(dim=-1).isnan() | proj_cov.mean(dim=-1).isinf() | (proj_cov.min(dim=-1).values < 0)) & mask
+                    if is_invalid.any():
+                        proj_scale_or_tril[is_invalid] = old_scale_or_tril[is_invalid]
+                        mask &= ~is_invalid
+                    proj_scale_or_tril[mask] = proj_cov[mask].sqrt()
+        except Exception as e:
+            import logging
+            logging.error('Projection failed, taking old scale_or_tril for projection.')
+            print("Projection failed, taking old scale_or_tril for projection.")
+            proj_scale_or_tril = old_scale_or_tril
+            raise e
 
-        return proj_std
+        return proj_scale_or_tril
 
 
 class KLProjectionGradFunctionCovOnly(torch.autograd.Function):

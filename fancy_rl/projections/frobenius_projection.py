@@ -1,33 +1,34 @@
 import torch
 from .base_projection import BaseProjection
+from tensordict.nn import TensorDictModule
 from typing import Dict
 
 class FrobeniusProjection(BaseProjection):
-    def __init__(self, in_keys: list[str], out_keys: list[str], trust_region_coeff: float = 1.0, mean_bound: float = 0.01, cov_bound: float = 0.01, scale_prec: bool = False):
-        super().__init__(in_keys=in_keys, out_keys=out_keys, trust_region_coeff=trust_region_coeff, mean_bound=mean_bound, cov_bound=cov_bound)
+    def __init__(self, in_keys: list[str], out_keys: list[str], trust_region_coeff: float = 1.0, mean_bound: float = 0.01, cov_bound: float = 0.01, scale_prec: bool = False, contextual_std: bool = True):
+        super().__init__(in_keys=in_keys, out_keys=out_keys, trust_region_coeff=trust_region_coeff, mean_bound=mean_bound, cov_bound=cov_bound, contextual_std=contextual_std)
         self.scale_prec = scale_prec
 
     def project(self, policy_params: Dict[str, torch.Tensor], old_policy_params: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        mean, chol = policy_params["loc"], policy_params["scale_tril"]
-        old_mean, old_chol = old_policy_params["loc"], old_policy_params["scale_tril"]
+        mean = policy_params["loc"]
+        old_mean = old_policy_params["loc"]
 
-        cov = torch.matmul(chol, chol.transpose(-1, -2))
-        old_cov = torch.matmul(old_chol, old_chol.transpose(-1, -2))
+        cov = self._calc_covariance(policy_params)
+        old_cov = self._calc_covariance(old_policy_params)
 
         mean_part, cov_part = self._gaussian_frobenius((mean, cov), (old_mean, old_cov))
 
         proj_mean = self._mean_projection(mean, old_mean, mean_part)
         proj_cov = self._cov_projection(cov, old_cov, cov_part)
 
-        proj_chol = torch.linalg.cholesky(proj_cov)
-        return {"loc": proj_mean, "scale_tril": proj_chol}
+        scale_or_scale_tril = self._calc_scale_or_scale_tril(proj_cov)
+        return {"loc": proj_mean, self.out_keys[1]: scale_or_scale_tril}
 
     def get_trust_region_loss(self, policy_params: Dict[str, torch.Tensor], proj_policy_params: Dict[str, torch.Tensor]) -> torch.Tensor:
-        mean, chol = policy_params["loc"], policy_params["scale_tril"]
-        proj_mean, proj_chol = proj_policy_params["loc"], proj_policy_params["scale_tril"]
+        mean = policy_params["loc"]
+        proj_mean = proj_policy_params["loc"]
 
-        cov = torch.matmul(chol, chol.transpose(-1, -2))
-        proj_cov = torch.matmul(proj_chol, proj_chol.transpose(-1, -2))
+        cov = self._calc_covariance(policy_params)
+        proj_cov = self._calc_covariance(proj_policy_params)
 
         mean_diff = torch.sum(torch.square(mean - proj_mean), dim=-1)
         cov_diff = torch.sum(torch.square(cov - proj_cov), dim=(-2, -1))
